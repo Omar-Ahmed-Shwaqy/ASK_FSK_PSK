@@ -1,0 +1,683 @@
+classdef (StrictDefaults)AWGNChannel < comm.internal.AWGNChannelBase
+%  AWGNChannel Add white Gaussian noise to the input signal
+%     AWGNCHAN = comm.internal.AWGNChannel creates an additive white
+%     Gaussian noise (AWGN) channel System object, AWGNCHAN. This object
+%     adds white Gaussian noise to a real or complex input signal.
+%
+%     AWGNCHAN = comm.internal.AWGNChannel(Name,Value) creates an AWGN
+%     channel object, AWGNCHAN, with the specified parameter Name set to the
+%     specified Value. You can specify additional name-value pair arguments
+%     in any order as (Name1,Value1,...,NameN,ValueN).
+%
+%     The AWGN channel object uses the default MATLAB random stream. Reset
+%     the default stream for repeatable simulations. Type 'help RandStream'
+%     for more information.
+%
+%     Step method syntax:
+%
+%     Y = step(AWGNCHAN,X) adds white Gaussian noise to input X and returns
+%     the result in Y. The input X can be a double or single precision data
+%     type scalar, vector, or 2D matrix with real or complex values. The
+%     dimensions of input X determine single or multichannel processing.
+%     For a M-by-N matrix input, M is the number of time samples per
+%     channel and N is the number of channels. M and N can be equal to 1.
+%     The object adds frames of length M of Gaussian noise to each of the N
+%     channels independently.
+%
+%     Y = step(AWGNCHAN,X,VAR) uses input VAR as the variance of the white
+%     Gaussian noise. This applies when you set the NoiseMethod parameter to
+%     'Variance' and the VarianceSource parameter to 'Input port'. Input VAR
+%     can be a positive scalar or row vector with a length equal to the
+%     number of channels. VAR must be of the same data type as input X.
+%
+%     System objects may be called directly like a function instead of
+%     using the step method. For example, y = step(obj, x) and y = obj(x)
+%     are equivalent.
+%
+%     AWGNChannel methods:
+%   
+%     step     - Add white Gaussian noise to input signal (see above)
+%     release  - Allow parameter value and input characteristics changes
+%     clone    - Create AWGN channel object with same parameter values
+%     isLocked - Locked status (logical)
+%     reset    - Reset random number stream if the RandomStream parameter is
+%                set to 'mt19937ar with seed'
+%
+%     AWGNChannel properties:
+%   
+%     NoiseMethod          - Noise method
+%     EbNo                 - Eb/No (dB)
+%     EsNo                 - Es/No (dB)
+%     SNR                  - SNR (dB)
+%     BitsPerSymbol        - Bits per symbol
+%     SignalPower          - Input signal power, referenced to 1 ohm (watts)
+%     SamplesPerSymbol     - Samples per symbol
+%     SymbolPeriod         - Symbol period (s) (To be removed)
+%     VarianceSource       - Noise variance source
+%     Variance             - Noise variance
+%     RandomStream         - Random number source
+%     Seed                 - Initial seed
+%     LegacyMode           - Activate legacy mode 
+%     noiseMode            - Noise mode (Legacy mode)
+%
+%     See also comm.AWGNChannel, awgn. 
+
+%     Copyright 2022-2023 The MathWorks, Inc.
+
+  %#codegen
+  %#ok<*EMCA>
+
+properties (Nontunable)
+  %NoiseMethod Noise method
+  %   Select the method to specify the noise level as one of 'Signal to
+  %   noise ratio  (Eb/No)' | 'Signal to noise ratio  (Es/No)' | 'Signal to
+  %   noise ratio  (SNR)' | 'Variance'. The default is 'Signal to noise
+  %   ratio  (SNR)'.
+  NoiseMethod = 'Signal to noise ratio  (SNR)'
+  %VarianceSource Noise variance source
+  %   Specify the source of the noise variance as one of 'Parameter' |
+  %   'Input port'. The default is 'Parameter'. Set VarianceSource to
+  %   'Input port' to specify the noise variance value via an input to the
+  %   step method. Set VarianceSource to 'Parameter' to specify the noise
+  %   variance value via the Variance parameter. This parameter applies when
+  %   you set the NoiseMethod parameter to 'Variance'.
+  VarianceSource = 'Parameter'
+  %SamplesPerSymbol Samples per symbol
+  %   Specify the number of samples per symbol. You can set this parameter
+  %   to a numeric, positive, integer scalar or row vector with a length
+  %   equal to the number of channels. This parameter applies when you set
+  %   the NoiseMethod parameter to 'Signal to noise ratio (Eb/No)' or
+  %   'Signal to noise ratio (Es/No)'. The default is 1 sample.
+  SamplesPerSymbol = 1
+  %SymbolPeriod Symbol period (s) (To be removed)
+  %   Specify the symbol period in seconds as a positive scalar. The
+  %   default is 1.
+  SymbolPeriod = 1
+end
+
+properties
+  %Seed Initial seed
+  %   Specify the initial seed of the random number generator algorithm as
+  %   a double precision, real, nonnegative integer scalar. This parameter
+  %   applies when you set the RandomStream parameter to 'mt19937ar with
+  %   seed' or when LegacyMode is true. The Seed is to re-initialize the
+  %   random number stream in the reset method. The default value of this
+  %   parameter is 67. This parameter is tunable.
+  Seed = 67
+end
+
+properties (Nontunable)
+  %noiseMod Noise method
+  %   Select the method to specify the noise level as one of 'Signal to
+  %   noise ratio  (Eb/No)' | 'Signal to noise ratio  (Es/No)' | 'Signal to
+  %   noise ratio  (SNR)' | 'Variance from mask' | 'Variance from port'.
+  %   The default is 'Signal to noise ratio  (SNR)'.
+  noiseMode = 'Signal to noise ratio  (SNR)'
+end
+
+properties (Constant, Hidden)
+  % String set for NoiseMethod
+  NoiseMethodSet = matlab.system.StringSet({...
+    'Signal to noise ratio  (Eb/No)', ...
+    'Signal to noise ratio  (Es/No)', ...
+    'Signal to noise ratio  (SNR)', ...
+    'Variance'})
+  VarianceSourceSet = matlab.system.StringSet({'Parameter','Input port'});
+end
+
+properties (Constant, Hidden)
+  % String set for noiseMod for backward compatibility
+  noiseModeSet = matlab.system.StringSet({...
+    'Signal to noise ratio  (Eb/No)', ...
+    'Signal to noise ratio  (Es/No)', ...
+    'Signal to noise ratio  (SNR)', ...
+    'Variance from mask', ...
+    'Variance from port'})
+end
+
+properties (Nontunable)
+  %LegacyMode Legacy mode
+  %   Specify if the block is in pre-R2023a mode by setting LegacyMode to
+  %   true. 
+  LegacyMode (1,1) logical = false
+end
+
+properties (Access=private, Nontunable)
+  pNumChannels
+end
+properties (Access=private) % Must be tunable for code gen in normal/accel with save OP
+
+  pStream
+  pStreamState
+  pSeedPrevious
+end
+
+methods
+  function set.SamplesPerSymbol(obj,val)
+    validateattributes( val, { 'numeric' }, ...
+      { 'real', 'positive', 'row', 'nonnan', 'integer' }, '', ...
+      'SamplesPerSymbol');
+    obj.SamplesPerSymbol = val;
+  end
+
+  function set.SymbolPeriod(obj,val)
+    validateattributes( val, { 'numeric' }, ...
+      { 'real', 'positive', 'row', 'nonnan', 'finite' }, '', ...
+      'SymbolPeriod');
+    obj.SymbolPeriod = val;
+  end
+  
+  function set.Seed(obj, seed)
+    propName = 'Seed';
+    validateattributes(seed, {'double'}, ...
+        {'real','vector','integer','nonnegative'}, ...
+        [class(obj) '.' propName], propName);  
+
+    obj.Seed = seed;
+  end
+
+  function set.LegacyMode(obj,mode)
+    obj.LegacyMode = mode;
+    synchronizeNoiseMethods(obj)
+  end
+end
+
+methods (Access=protected)
+  function icon = getIconImpl(~)      
+    icon = sprintf('AWGN\nChannel');
+  end  
+
+  function flag = isInactivePropertyImpl(obj, prop)
+    idx = getNoiseMethodIdx(obj);
+    switch prop
+      case 'SymbolPeriod'
+        flag = ~((idx <= 2) && obj.LegacyMode);
+      case 'RandomStream'
+        flag = obj.LegacyMode;
+      case 'Seed'
+        if obj.LegacyMode
+          flag = false;
+        else
+          flag = strcmp(obj.RandomStream, 'Global stream');
+        end
+      case 'SamplesPerSymbol'
+        if obj.LegacyMode
+          flag = true;
+        else
+          flag = (idx > 2);
+        end
+      case 'NoiseMethod'
+        flag = obj.LegacyMode;
+      case 'noiseMode'
+        flag = ~obj.LegacyMode;
+      otherwise
+        flag = isInactivePropertyImpl@comm.internal.AWGNChannelBase(obj, prop);
+    end
+  end
+
+  function flag = isInputSizeMutableImpl(obj,~)
+    flag = ~obj.LegacyMode;
+  end
+
+  function randData = randomDataLocal(obj,numSamples,numChannels)
+    if obj.LegacyMode
+      if isempty(coder.target)
+        stream = RandStream('v5normal');
+      else
+        stream = coder.internal.RandStream('shr3cong');
+      end
+      if obj.pComplexOutput
+        randData = complex(zeros(numSamples,numChannels,obj.pDataType)) / sqrt(2);
+      else
+        randData = zeros(numSamples,numChannels,obj.pDataType);
+      end
+      for p=1:numChannels
+        stream.State = obj.pWGNState(:,p); % Retrieve previous state
+        if obj.pComplexOutput
+          randDataInt = randn(stream, 2*numSamples, 1, obj.pDataType);
+          randData(:,p) = (randDataInt(1:2:end,1) + 1i*randDataInt(2:2:end,1)) / sqrt(2);
+        else
+          randData(:,p) =  randn(stream, numSamples, 1, obj.pDataType);
+        end
+        obj.pWGNState(:,p) = stream.State; % Log randstream state
+      end
+    else
+      % Noise (random number) generation
+      if obj.pUseGlobalStream
+        randData = randn(numSamples,numChannels, ...
+          'like',obj.pDataTypeLike);
+      else
+        if coder.target('MATLAB')
+          randData = randn(obj.pStream,numSamples,numChannels, ...
+            'like',obj.pDataTypeLike);
+        else
+          noiseStreamObj = coder.internal.RandStream('mt19937ar',  ...
+            'Seed',obj.Seed);
+          noiseStreamObj.State = obj.pStreamState;
+          randData = randn(noiseStreamObj,numSamples,numChannels, ...
+            'like',obj.pDataTypeLike);
+          obj.pStreamState = noiseStreamObj.State;
+        end
+      end
+    end
+  end
+
+  function idx = getNoiseMethodIdx(obj)
+    if obj.LegacyMode
+      switch obj.noiseMode(end-4:end)
+        case 'b/No)' %'Signal to noise ratio (Eb/No)'
+          idx = 1;
+        case 's/No)' %'Signal to noise ratio (Es/No)'
+          idx = 2;
+        case '(SNR)' %'Signal to noise ratio (SNR)'
+          idx = 3;
+        case ' mask'
+          idx = 4;
+        case ' port'
+          idx = 5;
+      end
+    else
+      switch obj.NoiseMethod(end-4:end)
+        case 'b/No)' %'Signal to noise ratio (Eb/No)'
+          idx = 1;
+        case 's/No)' %'Signal to noise ratio (Es/No)'
+          idx = 2;
+        case '(SNR)' %'Signal to noise ratio (SNR)'
+          idx = 3;
+        otherwise
+          idx = 4 + strcmp(obj.VarianceSource, 'Input port');
+      end
+    end
+  end
+
+  function setupImpl(obj, x, varargin)
+    synchronizeNoiseMethods(obj)
+    if obj.LegacyMode
+      coder.internal.errorIf((~isscalar(obj.Seed) && ...
+        length(obj.Seed) ~= size(x,2)),'dsp:system:outChansMismatch')
+      obj.pNumChannels = size(x,2);
+      if isInSimulink(obj)
+        if any(strncmp(obj.noiseMode, ...
+            {'Signal to noise ratio  (Eb/No)', ...
+            'Signal to noise ratio  (Es/No)'}, 27))
+          Ts = getSampleTime(obj);
+          coder.internal.errorIf(strcmp(Ts.Type,'Inherited'), ...
+            'comm:system:trigSampTimesNotSupSnr')
+          obj.pSamplesPerSymbol = obj.SymbolPeriod / ...
+            (Ts.SampleTime / size(x,1));
+          coder.internal.errorIf(...
+            any(obj.SymbolPeriod + eps < (Ts.SampleTime / size(x,1))), ...
+            'comm:system:symPeriodSampTimeMismatch')
+        end
+      else
+        obj.pSamplesPerSymbol = obj.SamplesPerSymbol;
+      end
+    else
+      propName = 'Seed';
+      validateattributes(obj.Seed, {'double'}, ...
+        {'real','scalar','integer','nonnegative','finite'}, ...
+        [class(obj) '.' propName], propName);
+      
+      obj.pSamplesPerSymbol = obj.SamplesPerSymbol;
+    end
+
+    setupImpl@comm.internal.AWGNChannelBase(obj, x, varargin{:});
+
+    % setupImpl@comm.internal.AWGNChannelBase sets pUseGlobalStream. Call
+    % the following after it is set.
+    if ~obj.LegacyMode
+      if obj.pUseGlobalStream
+        if ~(coder.target('MATLAB') || coder.target('MEX'))
+          % If using Global Stream and not in MATLAB or not generating MEX,
+          % set the seed to a random number based on time. This ensures
+          % that the generated code will use different random numbers. 
+          rng('shuffle')
+        end
+      else
+        if coder.target('MATLAB')
+          obj.pStream = RandStream('mt19937ar','Seed',obj.Seed);
+        else
+          noiseStreamObj = coder.internal.RandStream('mt19937ar','Seed',obj.Seed);
+          obj.pStreamState = noiseStreamObj.State;
+          obj.pSeedPrevious = obj.Seed;
+        end
+      end
+    end
+  end
+
+  function resetImpl(obj)
+    if obj.LegacyMode
+      if coder.target("MATLAB")
+        % Algorithm for DSP rand source block
+        if (obj.pNumChannels > 1) && isscalar(obj.Seed)
+          seedGenerator = RandStream('v5uniform','Seed',obj.Seed);
+          newSeeds = floor(rand(seedGenerator,1,obj.pNumChannels)*2^31);
+        else
+          newSeeds = obj.Seed;
+        end
+        obj.pWGNState = zeros(2,obj.pNumChannels,'double');
+        for p=1:obj.pNumChannels
+          stream = RandStream('v5normal', 'Seed', newSeeds(p));
+          obj.pWGNState(:,p) = stream.State; % Log randstream state
+        end
+      else
+        if (obj.pNumChannels > 1) && isscalar(obj.Seed)
+          out = localV5Uniform(obj.Seed,obj.pNumChannels);
+          newSeeds = floor(out*2^31);
+        else
+          newSeeds = obj.Seed;
+        end
+        obj.pWGNState = zeros(2,obj.pNumChannels,'uint32');
+        for p=1:obj.pNumChannels
+          stream = coder.internal.RandStream('v5normal', 'Seed', newSeeds(p));
+          obj.pWGNState(:,p) = stream.State; % Log randstream state
+        end
+      end
+    else
+      if ~obj.pUseGlobalStream
+        if coder.target('MATLAB')
+          reset(obj.pStream)
+        else
+          % Reset the state
+          noiseStreamObj = coder.internal.RandStream('mt19937ar', ...
+          'Seed',obj.Seed);
+          obj.pStreamState = noiseStreamObj.State;
+        end
+      end
+    end
+  end
+
+  function processTunedPropertiesImpl(obj)
+    if ~obj.LegacyMode
+      if ~obj.pUseGlobalStream
+        if coder.target("MATLAB")
+          if obj.pStream.Seed ~= obj.Seed
+            reset(obj.pStream,obj.Seed);
+          end
+        else
+          if obj.pSeedPrevious ~= obj.Seed
+            noiseStreamObj = coder.internal.RandStream('mt19937ar', ...
+              'Seed',obj.Seed);
+            obj.pStreamState = noiseStreamObj.State;
+            obj.pSeedPrevious = obj.Seed;
+          end
+        end
+      end
+    end
+    processTunedPropertiesImpl@comm.internal.AWGNChannelBase(obj)
+  end
+
+  function validateInputsImpl(obj, x, varargin)
+    validateInputsImpl@comm.internal.AWGNChannelBase(obj,x,varargin{:})
+    if ~isempty(varargin) % Validate variance input
+      validateattributes(varargin{1}, {'double','single','embedded.fi'},...
+        {'real','vector','nonnegative','finite'}, '', 'variance input');
+    end
+  end
+
+  function s = saveObjectImpl(obj)
+    if ~isLocked(obj)
+      synchronizeNoiseMethods(obj)
+    end
+    s = saveObjectImpl@comm.internal.AWGNChannelBase(obj);
+    if isLocked(obj)
+      if obj.LegacyMode
+        s.pNumChannels = obj.pNumChannels;
+      else
+        if ~obj.pUseGlobalStream
+          if coder.target("MATLAB")
+            s.pStreamState = obj.pStream.State;
+          else
+            s.pStreamState = obj.pStreamState;
+            s.pSeedPrevious = obj.pSeedPrevious;
+          end
+        end
+      end
+    end
+  end
+  
+  function loadObjectImpl(obj, s, wasLocked)
+    % Call the base class method
+    loadObjectImpl@comm.internal.AWGNChannelBase(obj, s, wasLocked);
+    if wasLocked
+      if obj.LegacyMode
+        obj.pNumChannels = s.pNumChannels;
+      else
+        v2024a = isfield(s,'pStreamState');
+        if ~obj.pUseGlobalStream
+          if coder.target('MATLAB')
+            obj.pStream = RandStream('mt19937ar','Seed',obj.Seed);
+            if v2024a
+              obj.pStream.State = s.pStreamState;
+            end
+          else
+            obj.pStreamState = s.pStreamState;
+            if v2024a
+              obj.pSeedPrevious = s.pSeedPrevious;
+            else
+              obj.pSeedPrevious = s.Seed;
+            end
+          end
+        end
+      end
+    end
+  end  
+
+  function name = getInputNamesImpl(obj)
+    if (strcmp(obj.NoiseMethod,'Variance') ...
+        && strcmp(obj.VarianceSource,'Input port')) ...
+        || (obj.LegacyMode ...
+        && (strcmp(obj.noiseMode,'Variance from port')))
+      name = ["In","Var"];
+    else
+      name = '';
+    end
+  end
+
+  function name = getOutputNamesImpl(~)
+    name = '';
+  end
+end
+
+methods(Static, Access = protected)
+  function header = getHeaderImpl
+    header = matlab.system.display.Header('comm.AWGNChannel', ...
+      'Title', 'AWGN Channel');
+  end
+
+  function groups = getPropertyGroupsImpl
+    pNoiseMethod = matlab.system.display.internal.Property('NoiseMethod', ...
+      'Description', 'Mode', ...
+      'UseClassDefault', false, ...
+      'Default', 'Signal to noise ratio  (SNR)');
+    pnoiseMode = matlab.system.display.internal.Property('noiseMode', ...
+      'Description', 'Mode', ...
+      'UseClassDefault', false, ...
+      'Default', 'Signal to noise ratio  (SNR)');
+    pEbNo = matlab.system.display.internal.Property('EbNo', ...
+      'Description', 'Eb/No (dB)', ...
+      'Alias', 'EbNodB');
+    pEsNo = matlab.system.display.internal.Property('EsNo', ...
+      'Description', 'Es/No (dB)', ...
+      'Alias', 'EsNodB');
+    pSNR = matlab.system.display.internal.Property('SNR', ...
+      'Description', 'SNR (dB)', ...
+      'Alias', 'SNRdB');
+    pBitsPerSymbol = matlab.system.display.internal.Property('BitsPerSymbol', ...
+      'Description', 'Number of bits per symbol', ...
+      'Alias', 'bitsPerSym');
+    pSignalPower = matlab.system.display.internal.Property('SignalPower', ...
+      'Description', 'Input signal power, referenced to 1 ohm (watts)', ...
+      'Alias', 'Ps');
+    pSymbolPeriod = matlab.system.display.internal.Property('SymbolPeriod', ...
+      'Description', 'Symbol period (s)', ...
+      'Alias', 'Tsym');
+
+    param = matlab.system.display.Section( ...
+      'Title', 'Parameters', ...
+      'PropertyList', {pNoiseMethod, pnoiseMode, pEbNo, pEsNo, pSNR, ...
+      pBitsPerSymbol, pSignalPower, 'SamplesPerSymbol', ...
+      pSymbolPeriod, 'VarianceSource', 'Variance'});
+
+    randomization = matlab.system.display.Section( ...
+      'Title', 'Randomization', ...
+      'PropertyList', {'RandomStream','Seed'});
+
+    pLegacyMode = matlab.system.display.internal.Property('LegacyMode', ...
+      'IsGraphical', false);
+    
+    legacyModeSection = matlab.system.display.Section( ...
+      'Title', 'LegacyMode', ...
+      'PropertyList', {pLegacyMode});
+    
+    groups = [legacyModeSection param randomization];
+  end
+end
+
+methods (Access=private)
+  function synchronizeNoiseMethods(obj)
+    if coder.target("matlab")
+      % Only in interactive mode. 
+      if obj.LegacyMode == true
+        if strcmp(obj.noiseMode,'Variance from mask')
+          obj.NoiseMethod = 'Variance';
+          obj.VarianceSource = 'Parameter';
+        elseif strcmp(obj.noiseMode,'Variance from port')
+          obj.NoiseMethod = 'Variance';
+          obj.VarianceSource = 'Input port';
+        else
+          obj.NoiseMethod = obj.noiseMode;
+        end
+      else
+        if strcmp(obj.NoiseMethod, 'Variance')
+          if strcmp(obj.VarianceSource,'Parameter')
+            obj.noiseMode = 'Variance from mask';
+          else
+            obj.noiseMode = 'Variance from port';
+          end
+        else
+          obj.noiseMode = obj.NoiseMethod;
+        end
+      end
+    else
+      % For codegen, do not synchronize. Correct
+      % settings are already in for the active mode.
+    end
+  end
+end
+end
+
+
+function out = localV5Uniform(seed,nChan)
+state = MWDSP_RandSrcInitState_U_64(seed, 1);
+out = zeros(1,nChan);
+for p=1:nChan
+  [out(p),state] = MWDSP_RandSrc_U_D(0, 1, state, 1, 1);
+end
+end
+
+function state = MWDSP_RandSrcInitState_U_64(seed, nChans)
+% Initialize state with seed for uniform random number generator
+
+jzero = uint32(hex2dec('0x80000000'));
+
+for p=1:nChans
+  %   Generate 32 floating point values, one bit at a time,
+  %   from 20-th bit of random shift register sequence.
+
+  %   need init seed to be != 0
+  if seed(p) == 0
+    j = jzero;
+  else
+    j = uint32(seed(p));
+  end
+
+  state = zeros(35,nChans);
+  for k = 1:32
+    d = 0;
+    for n = 1:53
+      % j ^= (j<<13);
+      j = bitxor(j, bitshift(j,13));
+      % j ^= (j>>17);
+      j = bitxor(j, bitshift(j,-17));
+      % j ^= (j<<5);
+      j = bitxor(j, bitshift(j,5));
+      d = d + d + double(bitand(bitshift(j,-19),1));
+    end
+    state(k,nChans) = d * 2^-53;
+  end
+  %   /* ulb = 0 */
+  state(k+1,nChans) = 0.0;
+  %   /* i = 0 */
+  state(k+2,nChans) = 0.0;
+  %   /* reset j to initial seed */
+  if seed == 0
+    j = jzero;
+  else
+    j = uint32(seed);
+  end
+  state(k+3,nChans) = double(j);
+end
+end
+
+function [y,state] = MWDSP_RandSrc_U_D(minVal, maxVal, stateAll, nChans, nSamps)
+% Generate uniform random numbers
+
+x = uint32(1);
+c = typecast(x,'uint8');
+isLittleEndian = c(1) == 1;
+
+y = zeros(nSamps,nChans);
+top = 1;
+bot = 2;
+%     union  {
+%         real64_T dp;
+%         struct {int32_T top; int32_T bot;} sp;
+%     } r;
+r = struct('dp', double(0), 'sp', uint32([0 0]));
+hexmask = uint32(hex2dec('000fffff'));
+
+for p=1:nChans
+  state = stateAll((1:35)+(p-1)*35);
+
+  i = bitand(uint32(state(34)), 31);
+  j = uint32(state(35));
+  scale = maxVal(p) - minVal(p);
+
+  for q=1:nSamps
+    % "Subtract with borrow" generator */
+    r.dp = state(bitand((i+20),31) +1) - state(bitand((i+5),31) +1) - state(33);
+    if (r.dp >= 0)
+      state(33) = 0;
+    else
+      r.dp = r.dp + 1.0;
+      % ldexp(1.,-53) = one in LSB */
+      state(33) = 1.0*2^-53;
+    end
+    state(i +1) = r.dp;
+    i = bitand((i+1),31); % compute (i+1) mod 32 */
+
+    r.sp = typecast(r.dp,'uint32');
+
+    % XOR with shift register sequence */
+    if (isLittleEndian)
+      r.sp(top) = bitxor(r.sp(top), typecast(j,'uint32'));
+      j = bitxor(j,bitshift(j,13));
+      j = bitxor(j,bitshift(j,-17));
+      j = bitxor(j,bitshift(j,5));
+      r.sp(bot) = bitxor(r.sp(bot), typecast(bitand(j, hexmask),'uint32'));
+    else
+      r.sp(bot) = bitxor(r.sp(bot), typecast(j,'uint32'));
+      j = bitxor(j,bitshift(j,13));
+      j = bitxor(j,bitshift(j,-17));
+      j = bitxor(j,bitshift(j,5));
+      r.sp(top) = bitxor(r.sp(top), typecast(bitand(j, hexmask),'uint32'));
+    end
+    r.dp = typecast([r.sp(top) r.sp(bot)], 'double');
+    y(q,p) = minVal(p) + scale*(r.dp);
+  end
+  % record and advance state, min, max */
+  state(34) = double(i);
+  state(35) = double(j);
+end
+end
